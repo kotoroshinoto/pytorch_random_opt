@@ -125,7 +125,8 @@ class GeneticAlgorithm(Optimizer):
 
         for _ in range(breeding_pop_size):
             parent_1, parent_2 = self._genetic_alg_select_parents(self.population, mating_probabilities)
-            child = self._crossover(parent_1, parent_2)
+            child = self.__class__._crossover(parent_1, parent_2)
+            child = self.__class__._mutate(child, self.mutation_prob)
             next_gen.append(child)
 
         # Fill remaining population with elites and dregs
@@ -134,7 +135,8 @@ class GeneticAlgorithm(Optimizer):
 
         return next_gen
 
-    def _crossover(self, parent_1: torch.Tensor, parent_2: torch.Tensor):
+    @staticmethod
+    def _crossover(parent_1: torch.Tensor, parent_2: torch.Tensor):
         if len(parent_1) > 1:
             # Randomly select a crossover point
             crossover_point = np.random.randint(len(parent_1) - 1)
@@ -147,10 +149,11 @@ class GeneticAlgorithm(Optimizer):
             child = torch.clone(parent_2)
         return child
 
-    def _mutate(self, child: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def _mutate(child: torch.Tensor, mutation_prob) -> torch.Tensor:
         mutated_child = child.clone()
         for idx, val in enumerate(mutated_child.view(-1)):
-            if np.random.rand() < self.mutation_prob:
+            if np.random.rand() < mutation_prob:
                 mutated_child.view(-1)[idx] = np.random.uniform(-1, 1)
         return mutated_child
 
