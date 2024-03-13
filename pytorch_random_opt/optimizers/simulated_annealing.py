@@ -1,11 +1,10 @@
+import numpy as np
 import torch
 from torch.optim.optimizer import Optimizer
-import random
-import math
 
 
 class SimulatedAnnealing(Optimizer):
-    def __init__(self, params, lr=0.1, T_initial=10, T_min=0.1, alpha=0.99, decay='exponential'):
+    def __init__(self, params, lr=0.1, T_initial=1, T_min=0.001, alpha=0.99, decay='exponential'):
         if lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if T_initial < 0.0:
@@ -43,8 +42,8 @@ class SimulatedAnnealing(Optimizer):
                     # Simulated Annealing update
                     T = self._get_temperature(T_initial, alpha)
                     for idx, val in enumerate(p.data.view(-1)):
-                        if random.random() < math.exp(-val / T):
-                            p.data.view(-1)[idx] = random.uniform(-1, 1)
+                        if np.random.random() < np.exp(-val/T):
+                            p.data.view(-1)[idx] = np.random.uniform(-1, 1)
 
         self.state['iteration'] = self.state.get('iteration', 0) + 1
         return loss

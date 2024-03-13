@@ -1,7 +1,6 @@
+import numpy as np
 import torch
 from torch.optim.optimizer import Optimizer
-import random
-import math
 
 
 class RandomHillClimbing(Optimizer):
