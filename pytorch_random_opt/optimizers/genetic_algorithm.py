@@ -6,11 +6,22 @@ from torch.optim import Optimizer
 
 
 class GeneticAlgorithm(Optimizer):
-    def __init__(self, params: Iterable[torch.Tensor], pop_size=200, pop_breed_percent=0.75, elite_dreg_ratio=0.99,
-                 minimum_elites=0, minimum_dregs=0, mutation_prob=0.1,
-                 max_attempts=10, max_iters=float('inf'), random_state=None,
-                 hamming_factor=0.0, hamming_decay_factor=None):
-
+    def __init__(
+            self,
+            params: Iterable[torch.Tensor],
+            lr=0.0001, # noqa
+            pop_size=200,
+            pop_breed_percent=0.75,
+            elite_dreg_ratio=0.99,
+            minimum_elites=0,
+            minimum_dregs=0,
+            mutation_prob=0.1,
+            max_attempts=10,
+            max_iters=float('inf'),
+            random_state=None,
+            hamming_factor=0.0,
+            hamming_decay_factor=None
+    ):
         if random_state is not None:
             torch.manual_seed(random_state)
             np.random.seed(random_state)
@@ -48,6 +59,9 @@ class GeneticAlgorithm(Optimizer):
 
     @staticmethod
     def _flatten_params(params_iter: Iterable[torch.Tensor]) -> torch.Tensor:
+        import rich
+        import rich.pretty
+        rich.pretty.pprint(params_iter)
         return torch.cat([p.view(-1) for p in params_iter])
 
     @staticmethod

@@ -74,7 +74,7 @@ if __name__ == '__main__':
         module__num_hidden_layers=1,
         module__size_hidden_layers=512,
         max_epochs=max_iters,
-        lr=0.0001,
+        # lr=0.0001,
         # Shuffle training data on each epoch
         iterator_train__shuffle=True,
         criterion=torch.nn.CrossEntropyLoss,
