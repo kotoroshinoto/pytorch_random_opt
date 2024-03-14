@@ -19,7 +19,7 @@ license = {text = "UNLICENSE"}
 [tool.pdm.version]
 source = "scm"
 write_to = "pytoch_random_opt/_version.py"
-write_template = "__version__ = '{}'"
+write_template = "__version__ = '{}'\n"
 
 [build-system]
 requires = ["pdm-backend"]
