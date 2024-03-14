@@ -140,6 +140,7 @@ class GeneticAlgorithm(Optimizer):
         self._hamming_decay()
 
         self._update_params(best_state)
+        closure()
 
     def _genetic_alg_select_parents(self, population: List[torch.Tensor], mating_probabilities):
         if self.hamming_factor > 0.01:
@@ -234,7 +235,6 @@ class GeneticAlgorithm(Optimizer):
             # Create the child by splicing the parents' chromosomes at the crossover point
             child = torch.cat((parent_1[:crossover_point], parent_2[crossover_point:]))
         elif self.np_generator.randint(2) == 0:
-
             child = torch.clone(parent_1)
         else:
             child = torch.clone(parent_2)
@@ -242,7 +242,14 @@ class GeneticAlgorithm(Optimizer):
 
     def _mutate(self, child: torch.Tensor) -> torch.Tensor:
         mutated_child = child.clone()
-        for idx, val in enumerate(mutated_child.view(-1)):
-            if self.np_generator.rand() < self.mutation_prob:
-                mutated_child.view(-1)[idx] = self.np_generator.uniform(-1, 1)
+        mutation_mask = torch.empty_like(mutated_child).uniform_(
+            0,
+            1,
+            generator=self.torch_generator
+        ) < self.mutation_prob
+        mutation_indices = torch.where(mutation_mask)
+        mutation_values = torch.empty(len(mutation_indices)).uniform_(0, 1)
+
+        mutated_child[mutation_indices] += mutation_values
+
         return mutated_child
