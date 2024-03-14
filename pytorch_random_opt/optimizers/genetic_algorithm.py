@@ -1,4 +1,4 @@
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Dict, Any
 
 import numpy as np
 import torch
@@ -22,12 +22,15 @@ class GeneticAlgorithm(Optimizer):
             hamming_factor=0.0,
             hamming_decay_factor=None
     ):
+        self.np_generator = np.random.RandomState()
+        self.torch_generator = torch.Generator()
         if random_state is not None:
-            torch.manual_seed(random_state)
-            np.random.seed(random_state)
+            self.np_generator.seed(random_state)
+            self.torch_generator.manual_seed(random_state)
 
         if pop_size < 0:
             raise ValueError("pop_size must be a positive integer.")
+
 
         # Define defaults dictionary
         defaults = dict(pop_size=pop_size, pop_breed_percent=pop_breed_percent,
@@ -40,8 +43,9 @@ class GeneticAlgorithm(Optimizer):
         # Initialize the optimizer with the model parameters and defaults
         super(GeneticAlgorithm, self).__init__(params, defaults)
 
-        self.params = params
-        self.params_flat = self.__class__._flatten_params(self.params)
+        self.params_flat, self.params_flat_shapes, self.params_other_kv = self.__class__._flatten_params(
+            self.param_groups
+        )
         self.pop_size = pop_size
         self.pop_breed_percent = pop_breed_percent
         self.elite_dreg_ratio = elite_dreg_ratio
@@ -58,30 +62,76 @@ class GeneticAlgorithm(Optimizer):
         self.population: List[torch.Tensor] = self._initialize_population()
 
     @staticmethod
-    def _flatten_params(params_iter: Iterable[torch.Tensor]) -> torch.Tensor:
-        import rich
-        import rich.pretty
-        rich.pretty.pprint(params_iter)
-        return torch.cat([p.view(-1) for p in params_iter])
+    def _flatten_params(
+            param_groups: List[Dict[str, Any]]
+    ) -> Tuple[torch.Tensor, List[List[torch.Size]], List[Dict[str, Any]]]:
+        things_to_torch_cat: List[torch.Tensor] = []
+        shapes: List[List[torch.Size]] = []
+        other_keys_and_values: List[Dict[str, Any]] = []
+        for i, param_group in enumerate(param_groups):
+            other_kv = dict()
+            shapes_i = []
+            # print(f"Parameter Group {i}:")
+            # print("Parameters:")
+            for pg_params in param_group['params']:
+                for p in pg_params:
+                    things_to_torch_cat.append(p.view(-1))
+                    shapes_i.append(p.shape)
+                # print(pg_params)
+            # print("Options:")
+            for key, value in param_group.items():
+                if key != 'params':
+                    other_kv[key] = value
+            #         print(f"{key}: {value}")
+            other_keys_and_values.append(other_kv)
+            shapes.append(shapes_i)
+        # raise ValueError("STOP")
+        # return torch.cat([p.view(-1) for p in params_iter])
+        if len(shapes) != len(other_keys_and_values):
+            raise ValueError("Shapes list and other_kv list are not the same size")
+        return torch.cat(things_to_torch_cat), shapes, other_keys_and_values
 
     @staticmethod
-    def _unflatten_params(flat_params: torch.Tensor, shapes: List[torch.Size]) -> List[torch.Tensor]:
-        unflattened_params = []
-        start_index = 0
-        for shape in shapes:
-            numel = shape.numel()
-            unflattened_params.append(flat_params[start_index:start_index + numel].view(shape))
-            start_index += numel
+    def _unflatten_params(
+            flat_params: torch.Tensor,
+            shapes: List[List[torch.Size]],
+            other_kv: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        unflattened_params: List[Dict[str, Any]] = []
+        flat_param_idx = 0
+        if len(shapes) != len(other_kv):
+            raise ValueError("Shapes list and other_kv list are not the same size")
+        for i in range(len(shapes)):
+            group_params: List[torch.Tensor] = []
+            group_shapes = shapes[i]
+            group_kv = other_kv[i]
+            for shape in group_shapes:
+                numel = int(torch.tensor(shape).prod().item())  # Calculate number of elements in tensor
+                param_data = flat_params[flat_param_idx:flat_param_idx + numel].view(shape)  # Extract data
+                flat_param_idx += numel  # Move to next chunk of flattened parameters
+                group_params.append(param_data)  # Append unflattened parameter
+            param_dict: Dict[str, Any] = {'params': group_params}
+            param_dict.update(group_kv)
+            unflattened_params.append(param_dict)
         return unflattened_params
+
+    def _update_params(self, state: torch.Tensor):
+        unflat_state = self.__class__._unflatten_params(state, self.params_flat_shapes, self.params_other_kv)
+        self.param_groups = unflat_state
 
     def step(self, closure=None):
         if closure is None:
             raise ValueError("This algorithm requires a loss function")
+        fitnesses = torch.tensor(self._execute_closure_multi(self.population, closure))
+
         # Calculate breeding probabilities
-        mating_probabilities = self._calculate_breeding_probabilities(closure=closure)
+        mating_probabilities = self._calculate_breeding_probabilities(fitnesses=fitnesses)
 
         # Create next generation
-        next_generation = self._create_next_generation(mating_probabilities, closure=closure)
+        next_generation, best_state, best_fitness = self._create_next_generation(
+            mating_probabilities,
+            fitnesses=fitnesses
+        )
 
         # Update population
         self.population = next_generation
@@ -89,23 +139,25 @@ class GeneticAlgorithm(Optimizer):
         # Decay hamming factor if applicable
         self._hamming_decay()
 
-        best_state, best_fitness = self._get_best_state_and_fitness(closure=closure)
-
-        return best_state, best_fitness
+        self._update_params(best_state)
 
     def _genetic_alg_select_parents(self, population: List[torch.Tensor], mating_probabilities):
-        selected = torch.multinomial(mating_probabilities, 2, replacement=True)
-        p1 = population[selected[0]]
-        p2 = population[selected[1]]
+        if self.hamming_factor > 0.01:
+            selected = torch.multinomial(mating_probabilities, 1, replacement=True)
+            p1 = population[selected[0]]
+            hamming_distances = torch.tensor([torch.abs(p1 - p2).sum() / len(p1) for p2 in population])
+            hfa = self.hamming_factor / (1.0 - self.hamming_factor)
+
+            hamming_factor_adjusted_probs = (hamming_distances * hfa) * mating_probabilities
+            hamming_factor_adjusted_probs /= hamming_distances.sum()
+
+            selected2 = torch.multinomial(hamming_factor_adjusted_probs, 1, replacement=True)
+            p2 = population[selected2[0]]
+        else:
+            selected = torch.multinomial(mating_probabilities, 2, replacement=True)
+            p1 = population[selected[0]]
+            p2 = population[selected[1]]
         return p1, p2
-
-    def _get_hamming_distance_default(self, population: List[torch.Tensor], p1):
-        hamming_distances = torch.tensor([torch.count_nonzero(p1 != p2).item() / len(p1) for p2 in population])
-        return hamming_distances
-
-    def _get_hamming_distance_float(self, population: List[torch.Tensor], p1):
-        hamming_distances = torch.tensor([torch.abs(p1 - p2).sum().item() / len(p1) for p2 in population])
-        return hamming_distances
 
     def _hamming_decay(self):
         if self.hamming_decay_factor is not None and self.hamming_factor > 0.0:
@@ -120,15 +172,31 @@ class GeneticAlgorithm(Optimizer):
         return population
 
     def _generate_random_state(self) -> torch.Tensor:
-        random_state = torch.rand_like(self.params_flat)
+        random_state = torch.randn(self.params_flat.shape, generator=self.torch_generator)
         return random_state
 
-    def _calculate_breeding_probabilities(self, closure):
-        fitnesses = torch.tensor([closure(state) for state in self.population])
+    def _calculate_breeding_probabilities(self, fitnesses):
         mating_probabilities = fitnesses / fitnesses.sum()
         return mating_probabilities
 
-    def _create_next_generation(self, mating_probabilities, closure) -> List[torch.Tensor]:
+    def _execute_closure(self, state: torch.Tensor, closure):
+        original_param_group = self.param_groups
+        self._update_params(state)
+        result = closure()
+        self.param_groups = original_param_group
+        return result
+
+    def _execute_closure_multi(self, states: Iterable[torch.Tensor], closure):
+        results = []
+        original_param_group = self.param_groups
+        for state in states:
+            self._update_params(state)
+            result = closure()
+            results.append(result)
+        self.param_groups = original_param_group
+        return results
+
+    def _create_next_generation(self, mating_probabilities, fitnesses) -> Tuple[List[torch.Tensor], torch.Tensor, Any]:
         # Create next generation of population
         next_gen = []
 
@@ -139,48 +207,42 @@ class GeneticAlgorithm(Optimizer):
 
         for _ in range(breeding_pop_size):
             parent_1, parent_2 = self._genetic_alg_select_parents(self.population, mating_probabilities)
-            child = self.__class__._crossover(parent_1, parent_2)
-            child = self.__class__._mutate(child, self.mutation_prob)
+            child = self._crossover(parent_1, parent_2)
+            child = self._mutate(child)
             next_gen.append(child)
 
+        sorted_indices = sorted(range(len(fitnesses)), key=lambda i: fitnesses[i])
+        sorted_fitnesses = [fitnesses[i] for i in sorted_indices]
+        sorted_population = [self.population[i] for i in sorted_indices]
+
+        elites = sorted_population[:elite_size]
+        dregs = sorted_population[-dreg_size:]
+
         # Fill remaining population with elites and dregs
-        next_gen.extend(self._select_elites(elite_size, closure=closure))
-        next_gen.extend(self._select_dregs(dreg_size, closure=closure))
+        next_gen.extend(elites)
+        next_gen.extend(dregs)
 
-        return next_gen
+        best_state = sorted_population[0]
+        best_fitness = sorted_fitnesses[0]
 
-    @staticmethod
-    def _crossover(parent_1: torch.Tensor, parent_2: torch.Tensor):
+        return next_gen, best_state, best_fitness
+
+    def _crossover(self, parent_1: torch.Tensor, parent_2: torch.Tensor):
         if len(parent_1) > 1:
             # Randomly select a crossover point
-            crossover_point = np.random.randint(len(parent_1) - 1)
+            crossover_point = self.np_generator.randint(len(parent_1) - 1)
             # Create the child by splicing the parents' chromosomes at the crossover point
             child = torch.cat((parent_1[:crossover_point], parent_2[crossover_point:]))
-        elif np.random.randint(2) == 0:
+        elif self.np_generator.randint(2) == 0:
 
             child = torch.clone(parent_1)
         else:
             child = torch.clone(parent_2)
         return child
 
-    @staticmethod
-    def _mutate(child: torch.Tensor, mutation_prob) -> torch.Tensor:
+    def _mutate(self, child: torch.Tensor) -> torch.Tensor:
         mutated_child = child.clone()
         for idx, val in enumerate(mutated_child.view(-1)):
-            if np.random.rand() < mutation_prob:
-                mutated_child.view(-1)[idx] = np.random.uniform(-1, 1)
+            if self.np_generator.rand() < self.mutation_prob:
+                mutated_child.view(-1)[idx] = self.np_generator.uniform(-1, 1)
         return mutated_child
-
-    def _select_elites(self, elite_size, closure) -> List[torch.Tensor]:
-        sorted_population = sorted(self.population, key=lambda state: -closure(state))
-        elites = sorted_population[:elite_size]
-        return elites
-
-    def _select_dregs(self, dreg_size, closure) -> List[torch.Tensor]:
-        sorted_population = sorted(self.population, key=lambda state: closure(state))
-        dregs = sorted_population[:dreg_size]
-        return dregs
-
-    def _get_best_state_and_fitness(self, closure) -> Tuple[torch.Tensor, torch.Tensor]:
-        best_state, best_fitness = max(self.population, key=lambda state: closure(state))
-        return best_state, best_fitness
