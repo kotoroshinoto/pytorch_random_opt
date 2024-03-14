@@ -1,17 +1,25 @@
 [project]
 name = "pytorch_random_opt"
-version = "0.0.1"
+dynamic = ["version"]
 description = "random optimizers for torch"
 authors = [
     {name = "Michael Gooch", email = "goochmi@gmail.com"},
 ]
 dependencies = [
     "numpy>=1.26.4",
-    "torch>=2.2",
+    "pydantic>=2.6.4",
+    "pandas>=2.2.1",
+    "scikit-learn>=1.4.1.post1",
+    "skorch>=0.15.0",
 ]
 requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "UNLICENSE"}
+
+[tool.pdm.version]
+source = "scm"
+write_to = "pytoch_random_opt/_version.py"
+write_template = "__version__ = '{}'"
 
 [build-system]
 requires = ["pdm-backend"]
@@ -20,3 +28,17 @@ build-backend = "pdm.backend"
 
 [tool.pdm]
 distribution = true
+plugins = ["pdm-plugin-torch==v23.4.0"]
+
+[tool.pdm.plugin.torch]
+dependencies = [
+   "torch>=2.2.1"
+]
+lockfile = "torch.lock"
+enable-cpu = true
+
+enable-rocm = true
+rocm-versions = ["5.7"]
+
+enable-cuda = true
+cuda-versions = ["cu118", "cu121"]
