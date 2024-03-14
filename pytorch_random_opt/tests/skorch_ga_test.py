@@ -80,6 +80,11 @@ if __name__ == '__main__':
         compile=False,
         optimizer=GeneticAlgorithm,
         optimizer__pop_size=1000,
+        optimizer__mutation_prob=0.25,
+        optimizer__max_attempts=20,
+        optimizer__minimum_elites=5,
+        optimizer__minimum_dregs=5,
+        optimizer__random_state=my_random_seed,
         callbacks=[early_stopping]
     )
 
