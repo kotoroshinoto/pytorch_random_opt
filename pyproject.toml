@@ -25,10 +25,12 @@ write_template = "__version__ = '{}'\n"
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
-
 [tool.pdm]
 distribution = true
 plugins = ["pdm-plugin-torch==v23.4.0"]
+
+[tool.pdm.dependencies]
+pybind11 = ">=2.6"
 
 [tool.pdm.plugin.torch]
 dependencies = [
